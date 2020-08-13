@@ -1,0 +1,315 @@
+- hosts: localhost
+  connection: local
+  vars:
+    postgresql_hba_entries:
+        - {type: local, database: all, user: postgres, auth_method: trust}
+        - {type: local, database: all, user: all, auth_method: trust}
+        - {type: host, database: all, user: all, address: '127.0.0.1/32', auth_method: trust}
+        - {type: host, database: all, user: all, address: '::1/128', auth_method: trust}
+
+  tasks:
+      
+    -   name: Check the version of Releases
+        command: hostnamectl
+        register: os_check
+        ignore_errors: yes
+
+    -   name: Install Role Postgresql
+        local_action: command ansible-galaxy install -f geerlingguy.postgresql 
+
+    -   name: Check if PostgreSQL is already installed
+        stat: path=/usr/bin/psql
+        register: psql_exists
+
+    -   name: Applying role postgresql
+        command: mv ~/.ansible/roles/geerlingguy.postgresql ~/.ansible/roles/pwslab.postgresql
+        when: not psql_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Installing PostgreSQL
+        include_role:
+            name: pwslab.postgresql
+        when: 
+            - not psql_exists.stat.exists
+            - not os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Add repo - CentOS 7
+        yum:
+            name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+            state: present
+        when: 
+            - not psql_exists.stat.exists
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Installing PostgreSQL - CentOS 7
+        include_role:
+            name: pwslab.postgresql
+        vars:
+            postgresql_enablerepo: "pgdg96"
+            postgresql_version: 9.6
+            postgresql_packages:
+                - postgresql96
+                - postgresql96-server
+                - postgresql96-contrib
+                - postgresql96-libs
+            postgresql_data_dir: /var/lib/pgsql/9.6/data
+            postgresql_bin_path: /usr/pgsql-9.6/bin
+            postgresql_config_path: /var/lib/pgsql/9.6/data
+            postgresql_daemon: postgresql-9.6
+        when: 
+            - not psql_exists.stat.exists
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Install Dependencies - Ubuntu
+        apt:
+            name: "{{ item }}"
+            state: present
+        loop:
+            - git 
+            - python3-pip 
+            - build-essential 
+            - wget 
+            - python3-dev 
+            - python3-venv 
+            - python3-wheel 
+            - libxslt-dev 
+            - libzip-dev 
+            - libldap2-dev 
+            - libsasl2-dev 
+            - python3-setuptools 
+            - node-less
+            - virtualenv
+            - python3-pypdf2
+            - libjpeg-dev 
+            - zlib1g-dev
+        when:
+            - os_check.stdout | regex_search("Ubuntu")      
+
+    -   name: Install Dependencies - CentOS
+        yum:
+            name: "{{ item }}"
+            state: present
+        loop:
+            - python3
+            - python3-devel 
+            - git
+            - gcc
+            - redhat-rpm-config
+            - libxslt-devel
+            - bzip2-devel
+            - openldap-devel
+            - libjpeg-devel
+            - freetype-devel
+        when:
+            - os_check.stdout | regex_search("CentOS")
+
+    -   name: Install virtualenv - CentOS 8
+        yum:
+            name: virtualenv
+            state: present
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 8")
+
+    -   name: Install virtualenv - CentOS 7
+        pip:
+            name: virtualenv
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Add the user 'odoo'
+        user:
+            name: odoo
+            state: present
+            system: yes
+            create_home: yes
+            home: /opt/odoo
+            shell: /bin/bash
+
+    -   name: Create Postgres User odoo
+        shell: su - postgres -c "createuser -s odoo"
+        ignore_errors: yes
+
+    -   name: Install WKHTMLTOPDF
+        apt:
+            deb: https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.bionic_amd64.deb
+        when:
+            - os_check.stdout | regex_search("Ubuntu")
+
+    -   name: Install WKHTMLTOPDF
+        yum:
+            name: https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox-0.12.5-1.centos7.x86_64.rpm
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Install WKHTMLTOPDF
+        yum:
+            name: https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox-0.12.5-1.centos8.x86_64.rpm
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 8")
+
+    -   name: Git clone odoo
+        git:
+            repo: 'https://www.github.com/odoo/odoo'
+            dest: /opt/odoo/odoo
+            version: 13.0
+            depth: 1
+        become: true
+        become_user: odoo
+
+    -   name: Add virtualenv
+        shell: python3 -m venv odoo-venv
+        args:
+            chdir: /opt/odoo
+        become: true
+        become_user: odoo
+
+    # -   name: Initiate virtualenv I
+    #     pip: 
+    #         virtualenv: /opt/odoo
+    #         virtualenv_python: python3
+    #         requirements: /opt/odoo/odoo/requirements.txt
+    #         virtualenv_site_packages: yes
+    #         # virtualenv_command: "/usr/bin/python3 -m venv"
+    #     become: true
+    #     become_user: odoo
+    #     when:
+    #         - not os_check.stdout | regex_search("Ubuntu 20")
+
+    # -   name: Initiate virtualenv II
+    #     pip: 
+    #         virtualenv: /opt/odoo
+    #         virtualenv_python: python3
+    #         virtualenv_site_packages: yes
+    #         # virtualenv_command: "/usr/bin/python3 -m venv"
+    #         name: wheel
+    #     become: true
+    #     become_user: odoo
+    #     when:
+    #         - not os_check.stdout | regex_search("Ubuntu 20")
+    
+    -   name: Initiate virtualenv
+        shell: pip3 install -r /opt/odoo/odoo/requirements.txt
+
+
+    -   name: Create Addons directory
+        file:
+            path: /opt/odoo/odoo-custom-addons
+            state: directory
+        become: true
+        become_user: odoo
+
+    -   name: Add configuration
+        lineinfile:
+            path: /etc/odoo.conf
+            line: "{{ item }}"
+            create: yes
+        loop:
+            - "[options]"
+            - ; This is the password that allows database operations:/
+            - admin_passwd = pwslab_admin
+            - db_host = False
+            - db_port = False
+            - db_user = odoo
+            - db_password = False
+            - addons_path = /opt/odoo/odoo/addons,/opt/odoo/odoo-custom-addons
+        # mode: "775"
+        # owner: odoo
+
+    -   name: Grant Permissions
+        shell: chmod 775 /etc/odoo.conf
+
+    -   name: Add Systemd File
+        lineinfile:
+            path: /etc/systemd/system/odoo.service
+            line: "{{ item }}"
+            create: yes
+        loop:
+            - "[Unit]"
+            - Description=Odoo
+            - Requires=postgresql.service
+            - After=network.target postgresql.service
+            - ""
+            - "[Service]"
+            - Type=simple
+            - SyslogIdentifier=odoo
+            - PermissionsStartOnly=true
+            - User=odoo
+            - Group=odoo
+            - ExecStart=/usr/bin/python3 /opt/odoo/odoo/odoo-bin -c /etc/odoo.conf
+            - StandardOutput=journal+console
+            - ""
+            - "[Install]"
+            - WantedBy=multi-user.target
+        when: 
+            - not os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Add Systemd File - CentOS 7
+        lineinfile:
+            path: /etc/systemd/system/odoo.service
+            line: "{{ item }}"
+            create: yes
+        loop:
+            - "[Unit]"
+            - Description=Odoo
+            - Requires=postgresql.service
+            - After=network.target postgresql.service
+            - ""
+            - "[Service]"
+            - Type=simple
+            - SyslogIdentifier=odoo
+            - PermissionsStartOnly=true
+            - User=odoo
+            - Group=odoo
+            - ExecStart=/usr/bin/python3 /opt/odoo/odoo/odoo-bin -c /etc/odoo.conf --addons-path=/opt/odoo/odoo/addons/
+            - StandardOutput=journal+console
+            - ""
+            - "[Install]"
+            - WantedBy=multi-user.target
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+
+    -   name: Disable SELinux
+        selinux:
+            state: disabled
+        when:
+            - os_check.stdout | regex_search("CentOS") 
+
+    # -   name: Install Dependencies - CentOS
+    #     yum:
+    #         name: "{{ item }}"
+    #         state: present
+    #     loop:
+    #         - epel-release 
+    #         - vim 
+    #         - bash-completion
+    #         - yum-utils
+    #     when:
+    #         - os_check.stdout | regex_search("CentOS") 
+
+    # -   name: Update
+    #     shell: yum update -y
+    #     when:
+    #         - os_check.stdout | regex_search("CentOS") 
+
+    # -   name: Add repo of odoo
+    #     shell: "{{ item }}"
+    #     loop:
+    #         - yum-config-manager --add-repo=http://nightly.odoo.com/13.0/nightly/rpm/odoo.repo
+    #         # - yum makecache fast
+    #     when:
+    #         - os_check.stdout | regex_search("CentOS") 
+
+    # -   name: Install odoo - CentOS
+    #     yum:
+    #         name: odoo
+    #         state: present
+    #     when:
+    #         - os_check.stdout | regex_search("CentOS") 
+
+    -   name: Start Odoo
+        systemd:
+            name: odoo
+            state: started
+            daemon_reload: yes
+            enabled: yes
